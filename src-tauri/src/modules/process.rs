@@ -239,7 +239,9 @@ pub fn close_antigravity(timeout_secs: u64) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
         // Linux: 使用 PID 精确控制
-        if let Some(pid) = get_antigravity_pid() {
+        let pids = get_antigravity_pids();
+        if !pids.is_empty() {
+            let pid = pids[0]; // 使用第一个找到的进程
             crate::modules::logger::log_info(&format!("尝试优雅关闭进程 {} (SIGTERM)", pid));
             let _ = Command::new("kill")
                 .args(["-15", &pid.to_string()])
