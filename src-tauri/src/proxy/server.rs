@@ -92,6 +92,7 @@ impl AxumServer {
             // OpenAI Protocol
             .route("/v1/models", get(handlers::openai::handle_list_models))
             .route("/v1/chat/completions", post(handlers::openai::handle_chat_completions))
+            .route("/v1/responses", post(handlers::openai::handle_completions)) // 兼容 Codex CLI
             
             // Claude Protocol
             .route("/v1/messages", post(handlers::claude::handle_messages))
@@ -111,7 +112,7 @@ impl AxumServer {
             .with_state(state);
         
         // 绑定地址
-        let addr = format!("127.0.0.1:{}", port);
+        let addr = format!("0.0.0.0:{}", port);
         let listener = tokio::net::TcpListener::bind(&addr)
             .await
             .map_err(|e| format!("端口 {} 绑定失败: {}", port, e))?;
