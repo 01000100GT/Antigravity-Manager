@@ -11,7 +11,7 @@ use serde_json::Value;
 use futures::StreamExt;
 
 const MAX_REQUEST_LOG_SIZE: usize = 100 * 1024 * 1024; // 100MB
-const MAX_RESPONSE_LOG_SIZE: usize = 10 * 1024 * 1024; // 10MB for image responses
+const MAX_RESPONSE_LOG_SIZE: usize = 100 * 1024 * 1024; // 100MB for image responses
 
 pub async fn monitor_middleware(
     State(state): State<AppState>,
@@ -183,7 +183,7 @@ pub async fn monitor_middleware(
                 Response::from_parts(parts, Body::from(bytes))
             }
             Err(_) => {
-                log.response_body = Some("[Response too large (>10MB)]".to_string());
+                log.response_body = Some("[Response too large (>100MB)]".to_string());
                 monitor.log_request(log).await;
                 Response::from_parts(parts, Body::empty())
             }
