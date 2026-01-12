@@ -575,6 +575,74 @@ impl TokenManager {
     pub fn len(&self) -> usize {
         self.tokens.len()
     }
+
+    /// 通过 email 获取指定账号的 Token（用于预热等需要指定账号的场景）
+    /// 此方法会自动刷新过期的 token
+    pub async fn get_token_by_email(&self, email: &str) -> Result<(String, String, String), String> {
+        // 查找账号信息
+        let token_info = {
+            let mut found = None;
+            for entry in self.tokens.iter() {
+                let token = entry.value();
+                if token.email == email {
+                    found = Some((
+                        token.account_id.clone(),
+                        token.access_token.clone(),
+                        token.refresh_token.clone(),
+                        token.timestamp,
+                        token.expires_in,
+                        chrono::Utc::now().timestamp(),
+                        token.project_id.clone(),
+                    ));
+                    break;
+                }
+            }
+            found
+        };
+
+        let (
+            account_id,
+            current_access_token,
+            refresh_token,
+            timestamp,
+            expires_in,
+            now,
+            project_id_opt,
+        ) = match token_info {
+            Some(info) => info,
+            None => return Err(format!("未找到账号: {}", email)),
+        };
+
+        let project_id = project_id_opt.unwrap_or_else(|| "bamboo-precept-lgxtn".to_string());
+        
+        // 检查是否过期 (提前5分钟)
+        if now < timestamp + expires_in - 300 {
+            return Ok((current_access_token, project_id, email.to_string()));
+        }
+
+        tracing::info!("[Warmup] Token for {} is expiring, refreshing...", email);
+
+        // 调用 OAuth 刷新 token
+        match crate::modules::oauth::refresh_access_token(&refresh_token).await {
+            Ok(token_response) => {
+                tracing::info!("[Warmup] Token refresh successful for {}", email);
+                let new_now = chrono::Utc::now().timestamp();
+                
+                // 更新缓存
+                if let Some(mut entry) = self.tokens.get_mut(&account_id) {
+                    entry.access_token = token_response.access_token.clone();
+                    entry.expires_in = token_response.expires_in;
+                    entry.timestamp = new_now;
+                }
+
+                // 保存到磁盘
+                let _ = self.save_refreshed_token(&account_id, &token_response).await;
+
+                Ok((token_response.access_token, project_id, email.to_string()))
+            }
+            Err(e) => Err(format!("[Warmup] Token refresh failed for {}: {}", email, e)),
+        }
+    }
     
     // ===== 限流管理方法 =====
     

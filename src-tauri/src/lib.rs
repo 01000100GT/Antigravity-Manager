@@ -64,6 +64,9 @@ pub fn run() {
                 }
             });
             
+            // 启动智能调度器
+            modules::scheduler::start_scheduler();
+            
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -144,6 +147,9 @@ pub fn run() {
             // Autostart 命令
             commands::autostart::toggle_auto_launch,
             commands::autostart::is_auto_launch_enabled,
+            // 预热命令
+            commands::warm_up_all_accounts,
+            commands::warm_up_account,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

@@ -745,7 +745,7 @@ fn build_contents(
                                     .filter_map(|block| {
                                         if let Some(text) = block.get("text").and_then(|v| v.as_str()) {
                                             Some(text.to_string())
-                                        } else if let Some(source) = block.get("source") {
+                                        } else if block.get("source").is_some() {
                                              // If it's an image/document, replace with placeholder
                                              if block.get("type").and_then(|v| v.as_str()) == Some("image") {
                                                  Some("[image omitted to save context]".to_string())

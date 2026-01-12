@@ -17,6 +17,29 @@ pub struct AppConfig {
     pub antigravity_args: Option<Vec<String>>, // [NEW] Antigravity 启动参数
     #[serde(default)]
     pub auto_launch: bool,  // 开机自动启动
+    #[serde(default)]
+    pub scheduled_warmup: ScheduledWarmupConfig, // [NEW] 定时预热配置
+}
+
+/// 定时预热配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScheduledWarmupConfig {
+    /// 是否启用智能预热
+    pub enabled: bool,
+}
+
+impl ScheduledWarmupConfig {
+    pub fn new() -> Self {
+        Self {
+            enabled: false,
+        }
+    }
+}
+
+impl Default for ScheduledWarmupConfig {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AppConfig {
@@ -33,6 +56,7 @@ impl AppConfig {
             antigravity_executable: None,
             antigravity_args: None,
             auto_launch: false,
+            scheduled_warmup: ScheduledWarmupConfig::default(),
         }
     }
 }

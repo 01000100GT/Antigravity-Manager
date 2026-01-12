@@ -50,6 +50,10 @@ export interface ZaiConfig {
     mcp: ZaiMcpConfig;
 }
 
+export interface ScheduledWarmupConfig {
+    enabled: boolean;
+}
+
 export interface AppConfig {
     language: string;
     theme: string;
@@ -64,5 +68,6 @@ export interface AppConfig {
     auto_check_update?: boolean; // 自动检查更新
     update_check_interval?: number; // 更新检查间隔（小时）
     accounts_page_size?: number; // 账号列表每页显示数量,默认 0 表示自动计算
+    scheduled_warmup: ScheduledWarmupConfig;
     proxy: ProxyConfig;
 }
