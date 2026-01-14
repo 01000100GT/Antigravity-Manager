@@ -1,5 +1,5 @@
 # Antigravity Tools 🚀
-> 专业的 AI 账号管理与协议反代系统 (v3.3.28)
+> 专业的 AI 账号管理与协议反代系统 (v3.3.29)
 <div align="center">
   <img src="public/icon.png" alt="Antigravity Logo" width="120" height="120" style="border-radius: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.15);">
 
@@ -8,7 +8,7 @@
   
   <p>
     <a href="https://github.com/lbjlaq/Antigravity-Manager">
-      <img src="https://img.shields.io/badge/Version-3.3.28-blue?style=flat-square" alt="Version">
+      <img src="https://img.shields.io/badge/Version-3.3.29-blue?style=flat-square" alt="Version">
     </a>
     <img src="https://img.shields.io/badge/Tauri-v2-orange?style=flat-square" alt="Tauri">
     <img src="https://img.shields.io/badge/Backend-Rust-red?style=flat-square" alt="Rust">
@@ -205,6 +205,17 @@ print(response.choices[0].message.content)
 ## 📝 开发者与社区
 
 *   **版本演进 (Changelog)**:
+    *   **v3.3.29 (2026-01-14)**:
+        - **OpenAI 流式响应 Function Call 支持修复 (Fix Issue #602, #614)**:
+            - **问题背景**: OpenAI 接口的流式响应 (`stream: true`) 中缺少 Function Call 处理逻辑,导致客户端无法接收到工具调用信息。
+            - **根本原因**: `create_openai_sse_stream` 函数只处理了文本内容、思考内容和图片,完全缺少对 `functionCall` 的处理。
+            - **修复内容**:
+                - 添加工具调用状态追踪变量 (`emitted_tool_calls`),防止重复发送
+                - 在 parts 循环中添加 `functionCall` 检测和转换逻辑
+                - 构建符合 OpenAI 规范的 `delta.tool_calls` 数组
+                - 使用哈希算法生成稳定的 `call_id`
+                - 包含完整的工具调用信息 (`index`, `id`, `type`, `function.name`, `function.arguments`)
+            - **影响范围**: 此修复确保了流式请求能够正确返回工具调用信息,与非流式响应和 Codex 流式响应的行为保持一致。所有使用 `stream: true` + `tools` 参数的客户端现在可以正常接收 Function Call 数据。
     *   **v3.3.28 (2026-01-14)**:
         - **OpenAI Thinking Content 修复 (PR #604)**:
             - **修复 Gemini 3 Pro thinking 内容丢失**: 在流式响应收集器中添加 `reasoning_content` 累积逻辑,解决了 Gemini 3 Pro (high/low) 非流式响应中思考内容丢失的问题。

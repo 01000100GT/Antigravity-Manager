@@ -1,5 +1,5 @@
 # Antigravity Tools 🚀
-> Professional AI Account Management & Proxy System (v3.3.28)
+> Professional AI Account Management & Proxy System (v3.3.29)
 
 <div align="center">
   <img src="public/icon.png" alt="Antigravity Logo" width="120" height="120" style="border-radius: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.15);">
@@ -9,7 +9,7 @@
   
   <p>
     <a href="https://github.com/lbjlaq/Antigravity-Manager">
-      <img src="https://img.shields.io/badge/Version-3.3.28-blue?style=flat-square" alt="Version">
+      <img src="https://img.shields.io/badge/Version-3.3.29-blue?style=flat-square" alt="Version">
     </a>
     <img src="https://img.shields.io/badge/Tauri-v2-orange?style=flat-square" alt="Tauri">
     <img src="https://img.shields.io/badge/Backend-Rust-red?style=flat-square" alt="Rust">
@@ -187,6 +187,17 @@ print(response.choices[0].message.content)
 ## 📝 Developer & Community
 
 *   **Changelog**:
+    *   **v3.3.29 (2026-01-14)**:
+        - **OpenAI Streaming Function Call Support Fix (Fix Issue #602, #614)**:
+            - **Background**: OpenAI interface streaming responses (`stream: true`) lacked Function Call processing logic, preventing clients from receiving tool call information.
+            - **Root Cause**: The `create_openai_sse_stream` function only handled text content, thinking content, and images, completely missing `functionCall` processing.
+            - **Fix Details**:
+                - Added tool call state tracking variable (`emitted_tool_calls`) to prevent duplicate sends
+                - Added `functionCall` detection and conversion logic in parts loop
+                - Built OpenAI-compliant `delta.tool_calls` array
+                - Used hash algorithm to generate stable `call_id`
+                - Included complete tool call information (`index`, `id`, `type`, `function.name`, `function.arguments`)
+            - **Impact**: This fix ensures streaming requests correctly return tool call information, maintaining consistency with non-streaming responses and Codex streaming responses. All clients using `stream: true` + `tools` parameters can now properly receive Function Call data.
     *   **v3.3.28 (2026-01-14)**:
         - **OpenAI Thinking Content Fix (PR #604)**:
             - **Fixed Gemini 3 Pro Thinking Content Loss**: Added `reasoning_content` accumulation logic in streaming response collector, resolving the issue where Gemini 3 Pro (high/low) non-streaming responses lost thinking content.
