@@ -20,6 +20,7 @@ pub struct ProxyToken {
     pub project_id: Option<String>,
     pub subscription_tier: Option<String>, // "FREE" | "PRO" | "ULTRA"
     pub remaining_quota: Option<i32>, // [FIX #563] Remaining quota for priority sorting
+    pub protected_models: HashSet<String>, // [NEW #621]
 }
 
 
@@ -205,6 +206,17 @@ impl TokenManager {
             .and_then(|q| self.calculate_quota_stats(q));
             // .filter(|&r| r > 0); // 移除 >0 过滤，因为 0% 也是有效数据，只是优先级低
         
+        // 【新增 #621】提取受限模型列表
+        let protected_models: HashSet<String> = account.get("protected_models")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+        
         Ok(Some(ProxyToken {
             account_id,
             access_token,
@@ -216,6 +228,7 @@ impl TokenManager {
             project_id,
             subscription_tier,
             remaining_quota,
+            protected_models,
         }))
     }
 
@@ -239,18 +252,21 @@ impl TokenManager {
             None => return false, // 无配额信息，跳过
         };
 
-        // 3. 检查是否已经被配额保护禁用
-        if account_json.get("proxy_disabled")
+        // 3. 检查是否已经被账号级或模型级配额保护禁用
+        let is_proxy_disabled = account_json.get("proxy_disabled")
             .and_then(|v| v.as_bool())
-            .unwrap_or(false)
-        {
-            if let Some(reason) = account_json.get("proxy_disabled_reason").and_then(|v| v.as_str()) {
-                if reason.contains("quota_protection") {
-                    // 已经被配额保护禁用，检查是否可以恢复
-                    return self.check_and_restore_quota(account_json, account_path, quota, &config).await;
-                }
+            .unwrap_or(false);
+        
+        let reason = account_json.get("proxy_disabled_reason")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        
+        if is_proxy_disabled {
+            if reason.contains("quota_protection") {
+                // [兼容性 #621] 如果是被旧版账号级保护禁用的，尝试恢复并转为模型级
+                return self.check_and_restore_quota(account_json, account_path, quota, &config).await;
             }
-            return true; // 被其他原因禁用，跳过
+            return true; // 其他原因禁用，跳过加载
         }
         
         // 4. 获取模型列表
@@ -259,34 +275,39 @@ impl TokenManager {
             None => return false,
         };
 
-        // 5. 遍历受监控的模型，检查是否有任何一个低于阈值
+        // 5. 遍历受监控的模型，检查保护与恢复
         let threshold = config.threshold_percentage as i32;
-        
+        let mut changed = false;
+
         for model in models {
             let name = model.get("name").and_then(|v| v.as_str()).unwrap_or("");
             if !config.monitored_models.iter().any(|m| m == name) {
-                continue; // 不在监控列表，跳过
+                continue; 
             }
 
-            // 获取该模型的百分比 (percentage)
             let percentage = model.get("percentage").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+            let account_id = account_json.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
 
             if percentage <= threshold {
-                tracing::warn!(
-                    "配额保护触发: {} 模型 {} 剩余 {}% (阈值: {}%)",
-                    account_json.get("email").and_then(|v| v.as_str()).unwrap_or("unknown"),
-                    name,
-                    percentage,
-                    threshold
-                );
-                
-                // 触发配额保护
-                let account_id = account_json.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
+                // 触发保护 (Issue #621 改为模型级)
                 let _ = self.trigger_quota_protection(account_id, account_path, percentage, threshold, name).await;
-                return true;
+                changed = true;
+            } else {
+                // 尝试恢复 (如果之前受限)
+                let protected_models = account_json.get("protected_models").and_then(|v| v.as_array());
+                let is_protected = protected_models.map_or(false, |arr| {
+                    arr.iter().any(|m| m.as_str() == Some(name))
+                });
+
+                if is_protected {
+                    let _ = self.restore_quota_protection(account_id, account_path, name).await;
+                    changed = true;
+                }
             }
         }
         
+        // 我们不再因为配额原因返回 true（即不再跳过账号），
+        // 而是加载并在 get_token 时进行过滤。
         false
     }
     
@@ -318,7 +339,7 @@ impl TokenManager {
         }
     }
     
-    /// 触发配额保护，禁用账号
+    /// 触发配额保护，限制特定模型 (Issue #621)
     async fn trigger_quota_protection(
         &self,
         account_id: &str,
@@ -332,21 +353,30 @@ impl TokenManager {
         )
         .map_err(|e| format!("解析 JSON 失败: {}", e))?;
         
-        let now = chrono::Utc::now().timestamp();
-        content["proxy_disabled"] = serde_json::Value::Bool(true);
-        content["proxy_disabled_at"] = serde_json::Value::Number(now.into());
-        content["proxy_disabled_reason"] = serde_json::Value::String(
-            format!("quota_protection: {} ({}% <= {}%)", model_name, current_val, threshold)
-        );
+        // 1. 初始化 protected_models 数组（如果不存在）
+        if content.get("protected_models").is_none() {
+            content["protected_models"] = serde_json::Value::Array(Vec::new());
+        }
         
-        std::fs::write(account_path, serde_json::to_string_pretty(&content).unwrap())
-            .map_err(|e| format!("写入文件失败: {}", e))?;
+        let protected_models = content["protected_models"].as_array_mut().unwrap();
         
-        tracing::info!("账号 {} 已被配额保护自动禁用", account_id);
+        // 2. 检查是否已存在
+        if !protected_models.iter().any(|m| m.as_str() == Some(model_name)) {
+            protected_models.push(serde_json::Value::String(model_name.to_string()));
+            
+            tracing::info!(
+                "账号 {} 的模型 {} 因配额受限（{}% <= {}%）已被加入保护列表",
+                account_id, model_name, current_val, threshold
+            );
+            
+            std::fs::write(account_path, serde_json::to_string_pretty(&content).unwrap())
+                .map_err(|e| format!("写入文件失败: {}", e))?;
+        }
+        
         Ok(())
     }
     
-    /// 检查并恢复被配额保护禁用的账号
+    /// 检查并从账号级保护恢复（迁移至模型级，Issue #621）
     async fn check_and_restore_quota(
         &self,
         account_json: &serde_json::Value,
@@ -354,65 +384,68 @@ impl TokenManager {
         quota: &serde_json::Value,
         config: &crate::models::QuotaProtectionConfig,
     ) -> bool {
-        let models = match quota.get("models").and_then(|m| m.as_array()) {
-            Some(m) => m,
-            None => return true, // 无模型数据，保持禁用
-        };
-        
-        let threshold = config.threshold_percentage as i32;
-        let mut all_above_threshold = true;
-        let mut has_monitored = false;
+        // [兼容性] 如果该账号当前处于 proxy_disabled=true 且原因是 quota_protection，
+        // 我们将其 proxy_disabled 设为 false，但同时更新其 protected_models 列表。
+        tracing::info!(
+            "正在迁移账号 {} 从全局配额保护模式至模型级保护模式",
+            account_json.get("email").and_then(|v| v.as_str()).unwrap_or("unknown")
+        );
 
-        for model in models {
-            let name = model.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            if !config.monitored_models.iter().any(|m| m == name) {
-                continue;
-            }
-            
-            has_monitored = true;
-            let percentage = model.get("percentage").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-            
-            if percentage <= threshold {
-                all_above_threshold = false;
-                break;
+        let mut content: serde_json::Value = match std::fs::read_to_string(account_path) {
+            Ok(s) => serde_json::from_str(&s).unwrap_or(serde_json::Value::Null),
+            Err(_) => return false,
+        };
+        if content.is_null() { return false; }
+
+        content["proxy_disabled"] = serde_json::Value::Bool(false);
+        content["proxy_disabled_reason"] = serde_json::Value::Null;
+        content["proxy_disabled_at"] = serde_json::Value::Null;
+
+        let threshold = config.threshold_percentage as i32;
+        let mut protected_list = Vec::new();
+
+        if let Some(models) = quota.get("models").and_then(|m| m.as_array()) {
+            for model in models {
+                let name = model.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                if !config.monitored_models.iter().any(|m| m == name) { continue; }
+                
+                let percentage = model.get("percentage").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                if percentage <= threshold {
+                    protected_list.push(serde_json::Value::String(name.to_string()));
+                }
             }
         }
         
-        // 只有当存在受监控模型，且所有受监控模型的配额都高于阈值时，才恢复
-        if has_monitored && all_above_threshold {
-            let account_id = account_json.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
-            tracing::info!(
-                "配额已恢复: {} 所有监控模型配额均 > {}%, 自动启用账号",
-                account_json.get("email").and_then(|v| v.as_str()).unwrap_or("unknown"),
-                threshold
-            );
-            
-            let _ = self.restore_quota_protection(account_id, account_path).await;
-            return false; // 已恢复，可以使用
-        }
+        content["protected_models"] = serde_json::Value::Array(protected_list);
         
-        true // 仍然低于阈值或无监控模型，保持禁用
+        let _ = std::fs::write(account_path, serde_json::to_string_pretty(&content).unwrap());
+        
+        false // 返回 false 表示现在已可以尝试加载该账号（模型级过滤会在 get_token 时发生）
     }
     
-    /// 恢复被配额保护禁用的账号
+    /// 恢复特定模型的配额保护 (Issue #621)
     async fn restore_quota_protection(
         &self,
         account_id: &str,
         account_path: &PathBuf,
+        model_name: &str,
     ) -> Result<(), String> {
         let mut content: serde_json::Value = serde_json::from_str(
             &std::fs::read_to_string(account_path).map_err(|e| format!("读取文件失败: {}", e))?,
         )
         .map_err(|e| format!("解析 JSON 失败: {}", e))?;
         
-        content["proxy_disabled"] = serde_json::Value::Bool(false);
-        content["proxy_disabled_reason"] = serde_json::Value::Null;
-        content["proxy_disabled_at"] = serde_json::Value::Null;
+        if let Some(arr) = content.get_mut("protected_models").and_then(|v| v.as_array_mut()) {
+            let original_len = arr.len();
+            arr.retain(|m| m.as_str() != Some(model_name));
+            
+            if arr.len() < original_len {
+                tracing::info!("账号 {} 的模型 {} 配额已恢复，移出保护列表", account_id, model_name);
+                std::fs::write(account_path, serde_json::to_string_pretty(&content).unwrap())
+                    .map_err(|e| format!("写入文件失败: {}", e))?;
+            }
+        }
         
-        std::fs::write(account_path, serde_json::to_string_pretty(&content).unwrap())
-            .map_err(|e| format!("写入文件失败: {}", e))?;
-        
-        tracing::info!("账号 {} 配额保护已自动恢复", account_id);
         Ok(())
     }
 
@@ -421,17 +454,30 @@ impl TokenManager {
     /// 参数 `quota_group` 用于区分 "claude" vs "gemini" 组
     /// 参数 `force_rotate` 为 true 时将忽略锁定，强制切换账号
     /// 参数 `session_id` 用于跨请求维持会话粘性
-    pub async fn get_token(&self, quota_group: &str, force_rotate: bool, session_id: Option<&str>) -> Result<(String, String, String), String> {
+    /// 参数 `target_model` 用于检查配额保护 (Issue #621)
+    pub async fn get_token(
+        &self, 
+        quota_group: &str, 
+        force_rotate: bool, 
+        session_id: Option<&str>,
+        target_model: &str,
+    ) -> Result<(String, String, String), String> {
         // 【优化 Issue #284】添加 5 秒超时，防止死锁
         let timeout_duration = std::time::Duration::from_secs(5);
-        match tokio::time::timeout(timeout_duration, self.get_token_internal(quota_group, force_rotate, session_id)).await {
+        match tokio::time::timeout(timeout_duration, self.get_token_internal(quota_group, force_rotate, session_id, target_model)).await {
             Ok(result) => result,
             Err(_) => Err("Token acquisition timeout (5s) - system too busy or deadlock detected".to_string()),
         }
     }
 
     /// 内部实现：获取 Token 的核心逻辑
-    async fn get_token_internal(&self, quota_group: &str, force_rotate: bool, session_id: Option<&str>) -> Result<(String, String, String), String> {
+    async fn get_token_internal(
+        &self, 
+        quota_group: &str, 
+        force_rotate: bool, 
+        session_id: Option<&str>,
+        target_model: &str,
+    ) -> Result<(String, String, String), String> {
         let mut tokens_snapshot: Vec<ProxyToken> = self.tokens.iter().map(|e| e.value().clone()).collect();
         let total = tokens_snapshot.len();
         if total == 0 {
@@ -548,6 +594,12 @@ impl TokenManager {
                             continue;
                         }
 
+                        // 【新增 #621】模型级限流检查
+                        if candidate.protected_models.contains(target_model) {
+                            tracing::debug!("Account {} is quota-protected for model {}, skipping", candidate.email, target_model);
+                            continue;
+                        }
+
                         // 【新增】主动避开限流或 5xx 锁定的账号 (来自 PR #28 的高可用思路)
                         if self.is_rate_limited(&candidate.account_id) {
                             continue;
@@ -574,6 +626,11 @@ impl TokenManager {
                     let idx = (start_idx + offset) % total;
                     let candidate = &tokens_snapshot[idx];
                     if attempted.contains(&candidate.account_id) {
+                        continue;
+                    }
+
+                    // 【新增 #621】模型级限流检查
+                    if candidate.protected_models.contains(target_model) {
                         continue;
                     }
 

@@ -531,7 +531,7 @@ pub async fn handle_messages(
         let session_id = Some(session_id_str.as_str());
 
         let force_rotate_token = attempt > 0;
-        let (access_token, project_id, email) = match token_manager.get_token(&config.request_type, force_rotate_token, session_id).await {
+        let (access_token, project_id, email) = match token_manager.get_token(&config.request_type, force_rotate_token, session_id, &config.final_model).await {
             Ok(t) => t,
             Err(e) => {
                 let safe_message = if e.contains("invalid_grant") {

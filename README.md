@@ -1,5 +1,5 @@
 # Antigravity Tools 🚀
-> 专业的 AI 账号管理与协议反代系统 (v3.3.29)
+> 专业的 AI 账号管理与协议反代系统 (v3.3.30)
 <div align="center">
   <img src="public/icon.png" alt="Antigravity Logo" width="120" height="120" style="border-radius: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.15);">
 
@@ -8,7 +8,7 @@
   
   <p>
     <a href="https://github.com/lbjlaq/Antigravity-Manager">
-      <img src="https://img.shields.io/badge/Version-3.3.29-blue?style=flat-square" alt="Version">
+      <img src="https://img.shields.io/badge/Version-3.3.30-blue?style=flat-square" alt="Version">
     </a>
     <img src="https://img.shields.io/badge/Tauri-v2-orange?style=flat-square" alt="Tauri">
     <img src="https://img.shields.io/badge/Backend-Rust-red?style=flat-square" alt="Rust">
@@ -205,6 +205,11 @@ print(response.choices[0].message.content)
 ## 📝 开发者与社区
 
 *   **版本演进 (Changelog)**:
+    *   **v3.3.30 (2026-01-14)**:
+        - **模型级配额保护 (Issue #621)**:
+            - **隔离优化**: 解决了因单个模型配额耗尽而禁用整个账号的问题。现在配额保护仅针对受限的具体模型，账号仍可处理其他模型的请求。
+            - **自动迁移**: 新系统会自动将旧版因配额保护被全局禁用的账号恢复，并平滑转为模型级限制。
+            - **全协议支持项目**: 已同步更新 Claude, OpenAI (Chat/DALL-E), Gemini, Audio 处理器的路由逻辑。
     *   **v3.3.29 (2026-01-14)**:
         - **OpenAI 流式响应 Function Call 支持修复 (Fix Issue #602, #614)**:
             - **问题背景**: OpenAI 接口的流式响应 (`stream: true`) 中缺少 Function Call 处理逻辑,导致客户端无法接收到工具调用信息。
