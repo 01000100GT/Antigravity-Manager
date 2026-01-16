@@ -180,6 +180,7 @@ fn sort_thinking_blocks_first(messages: &mut [Message]) {
         if msg.role == "assistant" {
             if let MessageContent::Array(blocks) = &mut msg.content {
                 // [FIX #709] Triple-stage partition: [Thinking, Text, ToolUse]
+                // Inspired by logic in 'antigravity-claude-proxy' (JS).
                 // This ensures protocol compliance while maintaining logical order.
                 
                 let mut thinking_blocks: Vec<ContentBlock> = Vec::new();
@@ -252,6 +253,8 @@ fn sort_thinking_blocks_first(messages: &mut [Message]) {
 /// 转换 Claude 请求为 Gemini v1internal 格式
 
 /// [FIX #709] Reorder serialized Gemini parts to ensure thinking blocks are first
+/// [FIX #709] Post-merge reordering helper.
+/// Inspired by 'CLIProxyAPI' (Go) final sorting step.
 fn reorder_gemini_parts(parts: &mut Vec<Value>) {
     if parts.len() <= 1 {
         return;
@@ -812,6 +815,7 @@ fn build_contents(
 
         // Track if we have already seen non-thinking content in this message.
         // Anthropic/Gemini protocol: Thinking blocks MUST come first.
+        // Pattern borrowed from 'Antigravity2Api' (JS) one-way gateway flag.
         let mut saw_non_thinking = false;
 
         match &msg.content {
