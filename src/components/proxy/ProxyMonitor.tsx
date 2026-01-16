@@ -260,7 +260,12 @@ export const ProxyMonitor: React.FC<ProxyMonitorProps> = ({ className }) => {
                     if (currentPending.length > 0) {
                         // Sort pending logs by timestamp descending (newest first)
                         const sortedPending = [...currentPending].sort((a, b) => b.timestamp - a.timestamp);
-                        setLogs(prev => [...sortedPending, ...prev].slice(0, 100));
+                        setLogs(prev => {
+                            // Deduplicate by id
+                            const existingIds = new Set(prev.map(log => log.id));
+                            const uniqueNewLogs = sortedPending.filter(log => !existingIds.has(log.id));
+                            return [...uniqueNewLogs, ...prev].slice(0, 100);
+                        });
 
                         // 批量更新统计
                         setStats((prev: ProxyStats) => {
